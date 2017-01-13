@@ -1,0 +1,4 @@
+#!/bin/sh
+SERIAL_PORT=/dev/ttyUSB0
+BAUD=9600
+screen $SERIAL_PORT $BAUD

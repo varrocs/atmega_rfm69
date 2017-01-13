@@ -5,8 +5,8 @@ extern FILE uart_input;
 #ifdef __cplusplus
 extern "C" {
 #endif
-	void uart_putchar(char c, FILE *stream);
-	char uart_getchar(FILE *stream);
+	int uart_putchar(char c, FILE *stream);
+	int uart_getchar(FILE *stream);
 
 	void uart_init(void);
 

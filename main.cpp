@@ -13,16 +13,12 @@ int main(void) {
 	DDRB = 0xFF; // PORTB is output, all pins
 	PORTB = 0x00; // Make pins low to start
 
-//	printf("Started\n");
-
 	for (;;) {
+		_delay_ms(100); // wait some time
 		PORTB ^= 0xFF; // invert all the pins
-		_delay_ms(1000); // wait some time
-		uart_putchar('A', NULL);
-		for (int i='A'; i<'Z'; i++) {
-		uart_putchar(i, NULL);
-		}
-//		printf("tikk\n");
+		_delay_ms(100); // wait some time
+
+		printf("Mukodik!!\n");
 	}
 	return 0;
 }

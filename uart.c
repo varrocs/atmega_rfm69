@@ -32,15 +32,16 @@ void uart_init(void) {
 
 }
 
-void uart_putchar(char c, FILE *stream) {
+int uart_putchar(char c, FILE *stream) {
 	if (c == '\n') {
 		uart_putchar('\r', stream);
 	}
 	loop_until_bit_is_set(UCSR0A, UDRE0);
 	UDR0 = c;
+	return 0;
 }
 
-char uart_getchar(FILE *stream) {
+int uart_getchar(FILE *stream) {
 	loop_until_bit_is_set(UCSR0A, RXC0);
 	return UDR0;
 }
