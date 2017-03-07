@@ -13,10 +13,9 @@ OBJ2HEX=avr-objcopy
 AVRDUDE=avrdude
 AVRDUDE_OPTIONS=-p$(MCU) -cusbasp -Pusb
 TARGET=rfm
-#uart.c.o
 OBJECTS=main.cpp.o RFM69.cpp.o SPI/SPI.cpp.o LowPower.cpp.o
 HEADERS=uart.h constants.h RFM69.h
-LIBRARIES=arduino/arduino.a
+LIBRARIES=arduino/arduino_$(F_CPU).a
 
 #LFUSE?=0xEF
 #HFUSE?=0xDB
@@ -26,7 +25,7 @@ LIBRARIES=arduino/arduino.a
 LFUSE?=0x62
 HFUSE?=0xDB
 # Brownout: 1.8V
-EFUSE?=0xFD
+EFUSE?=0xFE
 
 all: $(TARGET) $(TARGET).hex
 
@@ -35,6 +34,9 @@ all: $(TARGET) $(TARGET).hex
 
 %.cpp.o: %.cpp $(HEADERS)
 	$(CXX) -c $(CXXFLAGS) $< -o $@
+
+%.cpp.S: %.cpp $(HEADERS)
+	$(CXX) -S $(CXXFLAGS) $< -o $@
 
 $(TARGET): $(OBJECTS)
 	$(CXX) $(LDFLAGS) $(OBJECTS) $(LIBRARIES) -o $(TARGET)

@@ -89,7 +89,7 @@ bool RFM69::initialize(uint8_t freqBand, uint8_t nodeID, uint8_t networkID)
   pinMode(_slaveSelectPin, OUTPUT);
   SPI.begin();
   unsigned long start = millis();
-  uint8_t timeout = 50;
+  const uint8_t timeout = 50;
   do writeReg(REG_SYNCVALUE1, 0xAA); while (readReg(REG_SYNCVALUE1) != 0xaa && millis()-start < timeout);
   start = millis();
   do writeReg(REG_SYNCVALUE1, 0x55); while (readReg(REG_SYNCVALUE1) != 0x55 && millis()-start < timeout);
@@ -167,7 +167,12 @@ void RFM69::setMode(uint8_t newMode)
 
   // we are using packet mode, so this check is not really needed
   // but waiting for mode ready is necessary when going from sleep because the FIFO may not be immediately available from previous mode
-  while (_mode == RF69_MODE_SLEEP && (readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // wait for ModeReady
+  unsigned long start = millis();
+  const int timeout = 50;
+  while (
+	  (_mode == RF69_MODE_SLEEP && (readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00) // wait for ModeReady
+	&& ( millis()-start<timeout  )
+	  );
 
   _mode = newMode;
 }
@@ -275,8 +280,13 @@ void RFM69::sendACK(const void* buffer, uint8_t bufferSize) {
 // internal function
 void RFM69::sendFrame(uint8_t toAddress, const void* buffer, uint8_t bufferSize, bool requestACK, bool sendACK)
 {
+  const int timeout = 200;
+  const unsigned long start = millis();
   setMode(RF69_MODE_STANDBY); // turn off receiver to prevent reception while filling fifo
-  while ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // wait for ModeReady
+  while (
+	  ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00) // wait for ModeReady
+	  && (  millis() - start < timeout)
+	);
   writeReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_00); // DIO0 is "Packet Sent"
   if (bufferSize > RF69_MAX_DATA_LEN) bufferSize = RF69_MAX_DATA_LEN;
 
@@ -411,8 +421,13 @@ int16_t RFM69::readRSSI(bool forceTrigger) {
   if (forceTrigger)
   {
     // RSSI trigger not needed if DAGC is in continuous mode
+    const uint8_t timeout = 50;
+    unsigned long start = millis();
     writeReg(REG_RSSICONFIG, RF_RSSI_START);
-    while ((readReg(REG_RSSICONFIG) & RF_RSSI_DONE) == 0x00); // wait for RSSI_Ready
+    while (
+		((readReg(REG_RSSICONFIG) & RF_RSSI_DONE) == 0x00)
+	     && (millis() - start < timeout)
+	    ); // wait for RSSI_Ready
   }
   rssi = -readReg(REG_RSSIVALUE);
   rssi >>= 1;
@@ -776,16 +791,27 @@ void RFM69::readAllRegs()
 
 uint8_t RFM69::readTemperature(uint8_t calFactor) // returns centigrade
 {
+  const int timeout = 50;
+  unsigned long startTime = millis();
   setMode(RF69_MODE_STANDBY);
   writeReg(REG_TEMP1, RF_TEMP1_MEAS_START);
-  while ((readReg(REG_TEMP1) & RF_TEMP1_MEAS_RUNNING));
+  while (
+	  ((readReg(REG_TEMP1) & RF_TEMP1_MEAS_RUNNING))
+	  && (millis() - startTime < timeout)
+	);
   return ~readReg(REG_TEMP2) + COURSE_TEMP_COEF + calFactor; // 'complement' corrects the slope, rising temp = rising val
 } // COURSE_TEMP_COEF puts reading in the ballpark, user can add additional correction
 
 void RFM69::rcCalibration()
 {
+  const int timeout = 50;
+  unsigned long startTime = millis();
   writeReg(REG_OSC1, RF_OSC1_RCCAL_START);
-  while ((readReg(REG_OSC1) & RF_OSC1_RCCAL_DONE) == 0x00);
+  while (
+	  ((readReg(REG_OSC1) & RF_OSC1_RCCAL_DONE) == 0x00)
+	  && (millis() - startTime < timeout)
+	);
+
 }
 
 inline void RFM69::maybeInterrupts()

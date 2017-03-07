@@ -15,138 +15,204 @@
 #define OTHERID       1
 #define NETWORKID     42
 #define WAIT_INTERVAL 1
+#define PIN_LED       9
 
-// Upper threshold of voltage
+// Upper threshold of voltage, more would kill the radio unit
 #define UPPER_TRESHOLD 3400
+// Experimental lower threshold for radio usage. Less is not enogh for radio usage
+#define LOWER_TRESHOLD 2800
 
 RFM69 radio;
-char buffer[32] ;
-int counter = 0;
+char txBuffer[32];
+int counter = 0;    // Transmission counter
 
 volatile bool adcDone;
 
 ISR(ADC_vect) { adcDone = true; }
 
 static void flash() {
-	PORTB ^= 0xFF; // invert all the pins
-	delay(100); // wait some time
-	PORTB ^= 0xFF; // invert all the pins
-	delay(100); // wait some time
+    digitalWrite(PIN_LED, HIGH);
+    delay(100); // wait some time
+    digitalWrite(PIN_LED, LOW);
+    delay(100); // wait some time
 }
 
-
-static int vccRead (byte count =4) {
-	set_sleep_mode(SLEEP_MODE_ADC);
-	ADMUX = bit(REFS0) | 14; // use VCC and internal bandgap
-	bitSet(ADCSRA, ADIE);
-	while (count-- > 0) {
-		adcDone = false;
-		while (!adcDone) sleep_mode();
-	}
-	bitClear(ADCSRA, ADIE);
-
-	int x = ADC;
-	return x ? (1100L*1023) / x : -1;
-}
-
-// Voltage musn't go too high to protect the radio
-static void burnVolateIfNeeded() {
-	_delay_ms(5); // Wait for bandgap voltage stabilize
-	int voltage;
-check:
-	voltage = vccRead();
-	if (voltage > UPPER_TRESHOLD) {
-		_delay_ms(100); // delay
-		//TODO: maybe turn on the LED
+static inline const char* debugGetResetSource() {
 #if SERIAL_DEBUG
-		Serial.println("Voltage exceeded");
+	byte resetSrc = MCUSR;
+	MCUSR = 0x00;	// Reset for the next read
+	if (resetSrc & PORF) return "POWERON";
+	else if (resetSrc & EXTRF) return "EXTERNAL";
+	else if (resetSrc & BORF) return "BOD";
+	else if (resetSrc & WDRF) return "WDT";
+	else return "?";
 #endif
-		goto check;
-	}
+}
+
+static inline const void debugLogResetSource() {
+#if SERIAL_DEBUG
+	Serial.print("Reset source: "); Serial.println(debugGetResetSource());
+#endif
+}
+
+static inline void debugLog(const char* message) {
+#if SERIAL_DEBUG
+        Serial.println(message);
+#endif
+}
+
+static inline void debugLog(int message) {
+#if SERIAL_DEBUG
+        Serial.println(message);
+#endif
+}
+
+static inline void debugLogFlush() {
+#if SERIAL_DEBUG
+        Serial.flush();
+        delay(10);
+#endif
+}
+
+static inline void debugFlash(int times = 1) {
+#if SERIAL_DEBUG
+    for (int i = 0; i<times; ++i) {
+	    flash();
+    }
+#endif
+}
+
+// Return vcc * 1000
+static int vccRead(byte count=4) {
+    set_sleep_mode(SLEEP_MODE_ADC);
+    ADMUX = bit(REFS0) | 14; // use VCC and internal bandgap
+    bitSet(ADCSRA, ADIE);
+    while (count-- > 0) {
+        adcDone = false;
+        while (!adcDone) sleep_mode();
+    }
+    bitClear(ADCSRA, ADIE);
+
+    int x = ADC;
+    return x ? (1100L*1023) / x : -1;
+}
+
+// Voltage musn't go too high to protect the radio chip
+static void burnVoltageIfNeeded() {
+    _delay_ms(5); // Wait for bandgap voltage stabilize
+    bool overVoltage;
+    do {
+        overVoltage = (vccRead() > UPPER_TRESHOLD);
+        if (overVoltage) {
+            flash();    // burn some voltage
+            debugLog("Voltage exceeded");
+        }
+    } while (overVoltage);
+
 }
 
 static void longSleep(uint16_t minutes) {
-	// Put the radio to sleep
-	radio.sleep();
+    // Put the radio to sleep
+    //debugLog("RADIO sleep");
+    //radio.sleep();
 
-	uint32_t sleepCycles = minutes*60/8;
-	while (sleepCycles > 0) {
+    uint32_t sleepCycles = minutes*60/8;
+    while (sleepCycles > 0) {
+        debugLogFlush();
+        LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
+        debugLog("SYNC SYNC SYNC");
+        sleepCycles--;
+        burnVoltageIfNeeded();
 #if SERIAL_DEBUG
-		Serial.flush();
+        // Debug stuff
+        debugLog("Sleep cycles left: "); Serial.println(sleepCycles);
+        {
+            int voltage = vccRead();
+            Serial.print("Sleep bandgap voltage: "); Serial.println(voltage);
+        }
 #endif
-		LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
-		sleepCycles--;
-		burnVolateIfNeeded();
-#if SERIAL_DEBUG
-		// Debug stuff
-		flash();
-		Serial.print("- Sleep cycles left: "); Serial.println(sleepCycles);
-		{
-			int voltage = vccRead();
-			Serial.print("Bandgap voltage: "); Serial.println(voltage);
-		}
-#endif
-	}
+    }
 
-	// Wake up the radio
-	radio.receiveDone();
+    // Wake up the radio
+    //debugLog("RADIO wake");
+    //radio.receiveDone();
 }
 
+void setupRadio() {
+    debugLog("Radio init");
+    radio.initialize(FREQUENCY, NODEID, NETWORKID);
+    debugLog("Radio init done");
+    radio.setPowerLevel(31);
+    debugLog("Radio level set");
+//  radio.readAllRegs();
+    radio.rcCalibration();
+    debugLog("RC calibration done");
+    radio.setFrequency(433200000);
+    debugLog("Freq set done");
+
+    const uint8_t powerLevel=15;
+    radio.setPowerLevel(powerLevel);
+
+    radio.writeReg(REG_DATAMODUL,
+            RF_DATAMODUL_DATAMODE_PACKET |
+            RF_DATAMODUL_MODULATIONTYPE_OOK |
+            RF_DATAMODUL_MODULATIONSHAPING_00);
+}
+
+void transmitWithRadio(char* message, size_t length) {
+    setupRadio();
+
+    const uint8_t retryCount = 5;
+    const uint8_t waitBetweenRetry = 255;
+    debugLog("Sending");
+    bool ok = radio.sendWithRetry(OTHERID, txBuffer, length, retryCount, waitBetweenRetry);
+    debugLog(ok ? "OK" : "FAIL");
+
+    radio.sleep();
+
+    debugFlash( ok ? 2 : 1 );
+}
+
+
+void setup() {
+#if SERIAL_DEBUG
+    Serial.begin(9600);
+    Serial.println("-------  RESET  --------");
+#endif
+    debugLogResetSource();
+    pinMode(PIN_LED, OUTPUT);
+
+    setupRadio();
+    radio.sleep();
+
+    debugLog("Preparations done");
+}
+
+void cycle() {
+    const int voltage = vccRead();
+
+    debugLog("X Bandgap voltage: ");
+    debugLog(voltage);
+    debugFlash();
+
+    if (voltage > LOWER_TRESHOLD) {
+        int c = snprintf(txBuffer, sizeof txBuffer, "%d %d", ++counter, voltage);
+        transmitWithRadio(txBuffer, c);
+    }
+    longSleep(WAIT_INTERVAL);
+}
+
+
 int main(void) {
-	// Arduino init
-	init();
-	// uart
-	//uart_init();
-    	//stdout = &uart_output;
-        //stdin  = &uart_input;
-#if SERIAL_DEBUG
-	Serial.begin(9600);
-#endif
+    // Arduino init
+    init();
 
-	// LEDS
-	DDRB = 0xFF; // PORTB is output, all pins
-	PORTB = 0x00; // Make pins low to start
+    // Own setup
+    setup();
 
-	flash();
-	Serial.println("Starting Preparations");
-
-	radio.initialize(FREQUENCY, NODEID, NETWORKID);
-//	Serial.println("Radio init done");
-	radio.setPowerLevel(31);
-//	Serial.println("Radio level set");
-//	radio.readAllRegs();
-	radio.rcCalibration();
-//	Serial.println("RC calibration done");
-	radio.setFrequency(433200000);
-//	Serial.println("Freq set done");
-
-	uint8_t powerLevel=15;
-	radio.setPowerLevel(powerLevel);
-
-	flash();
-	Serial.println("Preparations done");
-
-	radio.writeReg(REG_DATAMODUL,
-			RF_DATAMODUL_DATAMODE_PACKET |
-			RF_DATAMODUL_MODULATIONTYPE_OOK |
-			RF_DATAMODUL_MODULATIONSHAPING_00);
-
-	int voltage;
-
-	for (;;) {
-		voltage = vccRead();
-#if SERIAL_DEBUG
-		Serial.print("Bandgap voltage: "); Serial.println(voltage);
-		Serial.println("Sending");
-#endif
-		flash();
-		int c = sprintf(buffer, "%d %d", ++counter, voltage);
-		bool ok = radio.sendWithRetry(OTHERID, buffer, c, 5/*Retries*/, 255/*Wait between attempts*/);
-		flash();
-		if (ok) flash();
-		longSleep(WAIT_INTERVAL);
-
-		if (serialEventRun) serialEventRun();
-	}
-	return 0;
+    for (;;) {
+	cycle();
+        if (serialEventRun) serialEventRun();
+    }
+    return 0;
 }
