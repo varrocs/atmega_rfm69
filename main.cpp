@@ -8,19 +8,20 @@
 #include "RFM69registers.h"
 #include "LowPower.h"
 
-#define SERIAL_DEBUG 1
+#define SERIAL_DEBUG 0
 
-#define FREQUENCY     RF69_433MHZ
-#define NODEID        2
-#define OTHERID       1
-#define NETWORKID     42
-#define WAIT_INTERVAL 1
-#define PIN_LED       9
+#define FREQUENCY     		RF69_433MHZ
+#define NODEID        		2
+#define OTHERID       		1
+#define NETWORKID     		42
+#define WAIT_INTERVAL 		1
+#define PIN_LED       		9
+#define PIN_RADIO_RESET 	8
 
 // Upper threshold of voltage, more would kill the radio unit
 #define UPPER_TRESHOLD 3400
 // Experimental lower threshold for radio usage. Less is not enogh for radio usage
-#define LOWER_TRESHOLD 2800
+#define LOWER_TRESHOLD 2900
 
 RFM69 radio;
 char txBuffer[32];
@@ -57,20 +58,26 @@ static inline const void debugLogResetSource() {
 
 static inline void debugLog(const char* message) {
 #if SERIAL_DEBUG
+	Serial.begin(9600);
         Serial.println(message);
+	Serial.flush();
+	Serial.end();
 #endif
 }
 
 static inline void debugLog(int message) {
 #if SERIAL_DEBUG
+	Serial.begin(9600);
         Serial.println(message);
+	Serial.flush();
+	Serial.end();
 #endif
 }
 
 static inline void debugLogFlush() {
 #if SERIAL_DEBUG
-        Serial.flush();
-        delay(10);
+        //Serial.flush();
+        //delay(10);
 #endif
 }
 
@@ -111,12 +118,13 @@ static void burnVoltageIfNeeded() {
 
 }
 
-static void longSleep(uint16_t minutes) {
+static void longSleep(const uint16_t minutes) {
     // Put the radio to sleep
     //debugLog("RADIO sleep");
     //radio.sleep();
 
     uint32_t sleepCycles = minutes*60/8;
+    //uint32_t sleepCycles = minutes;
     while (sleepCycles > 0) {
         debugLogFlush();
         LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
@@ -136,6 +144,14 @@ static void longSleep(uint16_t minutes) {
     // Wake up the radio
     //debugLog("RADIO wake");
     //radio.receiveDone();
+}
+
+
+void resetRadio() {
+    digitalWrite(PIN_RADIO_RESET, HIGH);
+    delay(10);
+    digitalWrite(PIN_RADIO_RESET, LOW);
+    delay(10);
 }
 
 void setupRadio() {
@@ -175,12 +191,11 @@ void transmitWithRadio(char* message, size_t length) {
 
 
 void setup() {
-#if SERIAL_DEBUG
-    Serial.begin(9600);
-    Serial.println("-------  RESET  --------");
-#endif
+    debugLog("-------  RESET  --------");
     debugLogResetSource();
     pinMode(PIN_LED, OUTPUT);
+    pinMode(PIN_RADIO_RESET, OUTPUT);
+    digitalWrite(PIN_RADIO_RESET, LOW);
 
     setupRadio();
     radio.sleep();
@@ -189,6 +204,7 @@ void setup() {
 }
 
 void cycle() {
+    longSleep(WAIT_INTERVAL);
     const int voltage = vccRead();
 
     debugLog("X Bandgap voltage: ");
@@ -198,8 +214,11 @@ void cycle() {
     if (voltage > LOWER_TRESHOLD) {
         int c = snprintf(txBuffer, sizeof txBuffer, "%d %d", ++counter, voltage);
         transmitWithRadio(txBuffer, c);
+        resetRadio();
+	setupRadio();
+	radio.sleep();
     }
-    longSleep(WAIT_INTERVAL);
+    radio.sleep();
 }
 
 
