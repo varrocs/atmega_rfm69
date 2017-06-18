@@ -7,8 +7,10 @@
 #include "RFM69.h"
 #include "RFM69registers.h"
 #include "LowPower.h"
+#include "dht.h"
 
 #define SERIAL_DEBUG 0
+#define FAST_SLEEP   0
 
 #define FREQUENCY     		RF69_433MHZ
 #define NODEID        		2
@@ -17,6 +19,7 @@
 #define WAIT_INTERVAL 		1
 #define PIN_LED       		9
 #define PIN_RADIO_RESET 	8
+#define PIN_DHT			7
 
 // Upper threshold of voltage, more would kill the radio unit
 #define UPPER_TRESHOLD 3400
@@ -26,6 +29,7 @@
 RFM69 radio;
 char txBuffer[32];
 int counter = 0;    // Transmission counter
+dht DHT;
 
 volatile bool adcDone;
 
@@ -38,8 +42,8 @@ static void flash() {
     delay(100); // wait some time
 }
 
-static inline const char* debugGetResetSource() {
 #if SERIAL_DEBUG
+static inline const char* debugGetResetSource() {
 	byte resetSrc = MCUSR;
 	MCUSR = 0x00;	// Reset for the next read
 	if (resetSrc & PORF) return "POWERON";
@@ -47,8 +51,9 @@ static inline const char* debugGetResetSource() {
 	else if (resetSrc & BORF) return "BOD";
 	else if (resetSrc & WDRF) return "WDT";
 	else return "?";
-#endif
+
 }
+#endif
 
 static inline const void debugLogResetSource() {
 #if SERIAL_DEBUG
@@ -115,7 +120,11 @@ static void burnVoltageIfNeeded() {
             debugLog("Voltage exceeded");
         }
     } while (overVoltage);
+}
 
+static bool readDHT() {
+	int chk = DHT.read11(PIN_DHT);
+	return chk == DHTLIB_OK;
 }
 
 static void longSleep(const uint16_t minutes) {
@@ -123,8 +132,11 @@ static void longSleep(const uint16_t minutes) {
     //debugLog("RADIO sleep");
     //radio.sleep();
 
-    uint32_t sleepCycles = minutes*60/8;
-    //uint32_t sleepCycles = minutes;
+#if FAST_SLEEP
+    uint32_t sleepCycles = minutes;		// For debug purposes
+#else
+    uint32_t sleepCycles = minutes*60/8;	// minutes to sleep cycles
+#endif
     while (sleepCycles > 0) {
         debugLogFlush();
         LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
@@ -212,7 +224,14 @@ void cycle() {
     debugFlash();
 
     if (voltage > LOWER_TRESHOLD) {
-        int c = snprintf(txBuffer, sizeof txBuffer, "%d %d", ++counter, voltage);
+	bool dhtOk = readDHT();
+        int c = snprintf(txBuffer, sizeof txBuffer,
+			"%d %d %d %d",
+			++counter,
+			voltage,
+			dhtOk ? (int)(DHT.temperature*10) : -99,
+			dhtOk ? (int)(DHT.humidity*10) : -99
+		      	);
         transmitWithRadio(txBuffer, c);
         resetRadio();
 	setupRadio();

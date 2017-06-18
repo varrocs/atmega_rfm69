@@ -13,7 +13,7 @@ OBJ2HEX=avr-objcopy
 AVRDUDE=avrdude
 AVRDUDE_OPTIONS=-p$(MCU) -cusbasp -Pusb
 TARGET=rfm
-OBJECTS=main.cpp.o RFM69.cpp.o SPI/SPI.cpp.o LowPower.cpp.o
+OBJECTS=main.cpp.o RFM69.cpp.o SPI/SPI.cpp.o LowPower.cpp.o dht.cpp.o
 HEADERS=uart.h constants.h RFM69.h
 LIBRARIES=arduino/arduino_$(F_CPU).a
 
